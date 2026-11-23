@@ -1,0 +1,125 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Mock Exam App</title>
+  <link rel="stylesheet" href="styles.css?v=4" />
+</head>
+<body>
+  <header class="app-header">
+    <div>
+      <h1>Mock Exam App</h1>
+      <p id="bankSummary">Loading question bank...</p>
+    </div>
+    <div id="timer" class="timer" hidden>02:00:00</div>
+  </header>
+
+  <main>
+    <section id="emptyBank" class="panel" hidden>
+      <h2>No questions configured</h2>
+      <p>Add questions to <code>questions.json</code> to start a practice exam.</p>
+    </section>
+
+    <section id="setup" class="panel" hidden>
+      <h2>Build a mock test</h2>
+      <div class="grid settings-grid">
+        <label>
+          Question count
+          <select id="questionCount">
+            <option>Loading...</option>
+          </select>
+        </label>
+        <label>
+          Timer
+          <select id="timerMinutes">
+            <option value="30">30 minutes</option>
+            <option value="60">1 hour</option>
+            <option value="90">1.5 hours</option>
+            <option value="120" selected>2 hours</option>
+            <option value="0">Untimed</option>
+          </select>
+        </label>
+        <label>
+          Module distribution
+          <select id="distribution">
+            <option value="proportional" selected>Proportional to pool size</option>
+            <option value="balanced">Balanced across modules</option>
+          </select>
+        </label>
+        <label>
+          Question source
+          <select id="questionSource">
+            <option value="all" selected>All questions</option>
+            <option value="unseen">Unseen questions only</option>
+            <option value="missed">Previously missed questions only</option>
+          </select>
+        </label>
+        <label class="checkbox-label">
+          <input id="shuffleChoices" type="checkbox" />
+          Shuffle answer choices
+        </label>
+      </div>
+      <p id="sourcePoolSummary" class="small"></p>
+      <div class="module-card" id="moduleBreakdown"></div>
+      <div class="actions">
+        <button id="startExam" class="primary">Start exam</button>
+        <button id="resumeExam" hidden>Resume saved exam</button>
+        <button id="clearSaved" class="ghost" hidden>Clear saved exam</button>
+      </div>
+      <p class="small muted">Exam mode does not reveal answers until submission or timer expiration.</p>
+
+      <section class="history-section">
+        <div class="history-header">
+          <h2>Previous attempts</h2>
+          <button id="clearHistory" class="ghost" hidden>Clear history</button>
+        </div>
+        <div id="historySummary"></div>
+        <div id="attemptHistory" class="attempt-history"></div>
+      </section>
+    </section>
+
+    <section id="exam" class="exam-layout" hidden>
+      <aside class="panel nav-panel">
+        <div class="exam-meta">
+          <strong id="progressText"></strong>
+          <span id="answeredText"></span>
+        </div>
+        <div id="questionNav" class="question-nav"></div>
+        <div class="actions stack">
+          <button id="prevQuestion">Previous</button>
+          <button id="nextQuestion">Next</button>
+          <button id="flagQuestion" class="ghost">Flag</button>
+          <button id="submitExam" class="danger">Submit exam</button>
+          <button id="abandonExam" class="ghost">End and return home</button>
+        </div>
+      </aside>
+
+      <section class="panel question-panel">
+        <div class="question-topline">
+          <span id="questionModule" class="pill"></span>
+          <span id="questionType" class="pill secondary"></span>
+          <span id="flagStatus" class="flag-status"></span>
+        </div>
+        <h2 id="questionPrompt"></h2>
+        <div id="questionImages" class="question-images"></div>
+        <div id="answerChoices" class="choices"></div>
+      </section>
+    </section>
+
+    <section id="results" class="panel" hidden>
+      <h2>Results</h2>
+      <div id="scoreSummary" class="score-summary"></div>
+      <div id="moduleResults" class="module-results"></div>
+      <div class="actions">
+        <button id="newExam" class="primary">New exam</button>
+        <button id="reviewMissed">Review missed only</button>
+        <button id="reviewAll">Review all</button>
+      </div>
+      <div id="reviewList" class="review-list"></div>
+    </section>
+  </main>
+
+  <script src="app.js?v=5"></script>
+</body>
+</html>
