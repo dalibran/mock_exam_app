@@ -160,6 +160,10 @@ function formatPercent(correct, total) {
   return `${Number.isInteger(pct) ? pct.toFixed(0) : pct}%`;
 }
 
+function formatScore(points, total) {
+  return `${Number(points.toFixed(2))}/${total} (${formatPercent(points, total)})`;
+}
+
 function formatAttemptDate(ts) {
   try {
     return new Intl.DateTimeFormat(undefined, {
@@ -287,7 +291,7 @@ function renderMissedModules(byModule, emptyText, legacyText = "") {
       <summary>${escapeHtml(module)} — ${items.length} missed question${items.length === 1 ? "" : "s"}</summary>
       <ul>
         ${items.map(({ q, stats }) => {
-          const statText = stats ? ` <span class="small muted">(${stats.correct}/${stats.seen} correct overall; missed ${stats.missed}x${stats.lastCorrect === true ? "; last correct" : stats.lastCorrect === false ? "; last missed" : ""})</span>` : "";
+          const statText = stats ? ` <span class="small muted">(${stats.correct}/${stats.seen} fully correct; missed ${stats.missed}x${stats.lastCorrect === true ? "; last correct" : stats.lastCorrect === false ? "; last missed" : ""})</span>` : "";
           return `<li><strong>${escapeHtml(questionRef(q))}</strong>${statText}<br><span class="small muted">${escapeHtml(promptPreview(q))}</span></li>`;
         }).join("")}
       </ul>
@@ -336,17 +340,17 @@ function renderHistory() {
 
   for (const attempt of history) {
     for (const [module, stats] of Object.entries(attempt.moduleStats || {})) {
-      aggregate[module] ||= { correct: 0, total: 0, covered: new Set() };
-      aggregate[module].correct += stats.correct || 0;
+      aggregate[module] ||= { pointsEarned: 0, total: 0, covered: new Set() };
+      aggregate[module].pointsEarned += stats.pointsEarned ?? stats.correct ?? 0;
       aggregate[module].total += stats.total || 0;
     }
     for (const [module, refs] of Object.entries(attempt.questionRefsByModule || {})) {
-      aggregate[module] ||= { correct: 0, total: 0, covered: new Set() };
+      aggregate[module] ||= { pointsEarned: 0, total: 0, covered: new Set() };
       for (const ref of refs || []) aggregate[module].covered.add(ref);
     }
     if (Array.isArray(attempt.questionResults)) {
       for (const result of attempt.questionResults) {
-        aggregate[result.module] ||= { correct: 0, total: 0, covered: new Set() };
+        aggregate[result.module] ||= { pointsEarned: 0, total: 0, covered: new Set() };
         aggregate[result.module].covered.add(questionRef(result));
       }
     }
@@ -363,7 +367,7 @@ function renderHistory() {
         const uniqueSeen = stats.covered.size || [...seenIds].filter(id => questionLookup.get(id)?.module === module).length;
         return `<div>
           <strong>${escapeHtml(module)}</strong><br>
-          ${stats.correct}/${stats.total} (${formatPercent(stats.correct, stats.total)})<br>
+          ${formatScore(stats.pointsEarned, stats.total)}<br>
           <span class="small muted">${uniqueSeen}/${moduleTotal} unique source questions seen</span>
         </div>`;
       }).join("")}
@@ -378,7 +382,7 @@ function renderHistory() {
   list.innerHTML = displayRows.map(({ attempt, attemptNumber }) => {
     const moduleLine = Object.entries(attempt.moduleStats || {})
       .sort(([a], [b]) => a.localeCompare(b))
-      .map(([module, stats]) => `${escapeHtml(module)} - ${stats.correct}/${stats.total} (${formatPercent(stats.correct, stats.total)})`)
+      .map(([module, stats]) => `${escapeHtml(module)} - ${formatScore(stats.pointsEarned ?? stats.correct, stats.total)}`)
       .join("; ");
     const coverageDetails = Object.entries(attempt.questionRefsByModule || {})
       .sort(([a], [b]) => a.localeCompare(b))
@@ -394,7 +398,7 @@ function renderHistory() {
 
     return `<article class="attempt-card">
       <h4>Exam Attempt #${attemptNumber}</h4>
-      <p><strong>${formatAttemptDate(attempt.submittedAt)}</strong> · ${attempt.correctCount}/${attempt.questionCount} (${formatPercent(attempt.correctCount, attempt.questionCount)}) · ${formatDuration(attempt.elapsedMs || 0)}</p>
+      <p><strong>${formatAttemptDate(attempt.submittedAt)}</strong> · ${formatScore(attempt.pointsEarned ?? attempt.correctCount, attempt.questionCount)} · ${formatDuration(attempt.elapsedMs || 0)}</p>
       <p>${moduleLine}</p>
       <details>
         <summary>Missed questions</summary>
@@ -595,6 +599,15 @@ function answersEqual(a, b) {
   return x === y;
 }
 
+function scoreQuestion(type, user, correct) {
+  if (type !== "select_all") return Number(answersEqual(user, correct));
+
+  const correctKeys = new Set(correct);
+  const selectedKeys = new Set(user);
+  if (!correctKeys.size || [...selectedKeys].some(key => !correctKeys.has(key))) return 0;
+  return selectedKeys.size / correctKeys.size;
+}
+
 function abandonExam() {
   if (!state || state.mode !== "exam") return renderSetup();
   const msg = "End this exam and return to the main screen?\n\nProgress will be discarded and no result will be saved.";
@@ -628,17 +641,22 @@ function gradeExam() {
   return state.questions.map(q => {
     const user = state.answers[q.id] || [];
     const correct = q.correctAnswers || normalizeCorrectAnswer(q);
-    const isCorrect = answersEqual(user, correct);
-    return { q, user, correct, isCorrect };
+    const pointsEarned = scoreQuestion(q.type, user, correct);
+    return { q, user, correct, pointsEarned, isCorrect: pointsEarned === 1 };
   });
+}
+
+function totalPoints(graded) {
+  return graded.reduce((total, result) => total + result.pointsEarned, 0);
 }
 
 function buildModuleStats(graded) {
   const byModule = {};
   for (const g of graded) {
     const m = g.q.module;
-    byModule[m] ||= { correct: 0, total: 0 };
+    byModule[m] ||= { correct: 0, pointsEarned: 0, total: 0 };
     byModule[m].total++;
+    byModule[m].pointsEarned += g.pointsEarned;
     if (g.isCorrect) byModule[m].correct++;
   }
   return byModule;
@@ -681,6 +699,7 @@ function saveAttemptToHistory(autoSubmitted) {
     autoSubmitted,
     questionCount,
     correctCount,
+    pointsEarned: totalPoints(graded),
     moduleStats: buildModuleStats(graded),
     questionRefsByModule: buildQuestionRefsByModule(),
     questionResults: buildQuestionResults(graded),
@@ -699,16 +718,14 @@ function renderResults(filter = "all") {
   $("results").hidden = false;
   $("timer").hidden = true;
   const graded = gradeExam();
-  const correctCount = graded.filter(g => g.isCorrect).length;
-  const pct = formatPercent(correctCount, graded.length);
   const elapsed = state.submittedAt ? Math.max(0, state.submittedAt - state.startedAt) : 0;
   $("scoreSummary").innerHTML = `
-    <div class="score-big">${correctCount}/${graded.length} (${pct})</div>
+    <div class="score-big">${formatScore(totalPoints(graded), graded.length)}</div>
     <div>Elapsed time: ${formatDuration(elapsed)}</div>
   `;
   const byModule = buildModuleStats(graded);
   $("moduleResults").innerHTML = Object.entries(byModule).sort(([a], [b]) => a.localeCompare(b)).map(([module, r]) => {
-    return `<div><strong>${module}</strong><br>${r.correct}/${r.total} (${formatPercent(r.correct, r.total)})</div>`;
+    return `<div><strong>${module}</strong><br>${formatScore(r.pointsEarned, r.total)}</div>`;
   }).join("");
   renderReview(filter);
 }
@@ -732,8 +749,12 @@ function renderReview(filter = "all") {
   $("reviewList").innerHTML = shown.map((g) => {
     const q = g.q;
     const imageHtml = (q.images || []).map(src => `<img src="${src}" alt="Question figure">`).join("");
-    return `<article class="review-card ${g.isCorrect ? 'correct' : 'wrong'}">
-      <h3>${escapeHtml(q.module)} / Source Q${q.number}: ${g.isCorrect ? '<span class="correct-text">Correct</span>' : '<span class="wrong-text">Incorrect</span>'}</h3>
+    let status = '<span class="wrong-text">Incorrect</span>';
+    if (g.isCorrect) status = '<span class="correct-text">Correct</span>';
+    else if (g.pointsEarned > 0) status = `Partial credit (${formatPercent(g.pointsEarned, 1)})`;
+    const gradeClass = g.isCorrect ? ' correct' : g.pointsEarned === 0 ? ' wrong' : '';
+    return `<article class="review-card${gradeClass}">
+      <h3>${escapeHtml(q.module)} / Source Q${q.number}: ${status}</h3>
       <p>${escapeHtml(q.prompt)}</p>
       ${imageHtml ? `<div class="question-images">${imageHtml}</div>` : ''}
       <p class="answer-line"><span class="label">Your answer:</span> ${escapeHtml(formatAnswer(q, g.user))}</p>

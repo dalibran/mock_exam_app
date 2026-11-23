@@ -7,8 +7,9 @@ A browser-based practice exam builder. It samples questions from a JSON bank, ru
 - **Exam length and timing.** Choose 10 to 60 questions in increments of 10, depending on the bank size, or let the app pick a random length from 40 to 60. Set a 30-, 60-, 90-, or 120-minute timer, or take the exam untimed. Timed exams submit automatically when time runs out.
 - **Module distribution.** Assign each question to a module. The app can sample in proportion to the size of each module's question pool or spread questions as evenly as possible across modules.
 - **Optional question images.** Use the `images` field to attach one or more diagrams, screenshots, or figures. Images appear during the exam and in answer review. Set `figureCaption` to display a caption during the exam.
+- **Partial credit.** On select-all questions, each correct option earns an equal share of the point. Choosing two of three correct options earns two-thirds credit. Selecting any incorrect option earns zero for that question.
 - **Attempt history.** Compare scores and elapsed times in **Previous attempts**. Build a follow-up exam from all questions, only unseen questions, or only questions you previously missed.
-- **Module performance.** See the number and percentage correct for each module after an exam. Across saved attempts, review each module's cumulative accuracy, how many unique questions you've seen, and which questions you've missed.
+- **Module performance.** See points earned and percentage scores for each module after an exam. Across saved attempts, review each module's cumulative score, how many unique questions you've seen, and which questions you've missed.
 
 ## Run locally
 
