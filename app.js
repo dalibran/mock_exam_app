@@ -3,6 +3,8 @@ let questionLookup = new Map();
 let meta = null;
 let state = null;
 let timerHandle = null;
+let usingSampleBank = false;
+let storageSuffix = "";
 
 const $ = (id) => document.getElementById(id);
 const STORAGE_KEY = "oms6250-mock-exam-state-v1";
@@ -117,13 +119,13 @@ function populateQuestionCountOptions() {
 
 function saveState() {
   if (state && state.mode === "exam") {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+    localStorage.setItem(STORAGE_KEY + storageSuffix, JSON.stringify(state));
   }
 }
 
 function loadSavedState() {
   try {
-    const saved = JSON.parse(localStorage.getItem(STORAGE_KEY));
+    const saved = JSON.parse(localStorage.getItem(STORAGE_KEY + storageSuffix));
     if (!saved || saved.mode !== "exam" || !Array.isArray(saved.questions)) return null;
     saved.questions = saved.questions.map(q => hydrateQuestionForExam(q, false));
     return saved;
@@ -131,12 +133,12 @@ function loadSavedState() {
 }
 
 function clearSavedState() {
-  localStorage.removeItem(STORAGE_KEY);
+  localStorage.removeItem(STORAGE_KEY + storageSuffix);
 }
 
 function loadHistory() {
   try {
-    const history = JSON.parse(localStorage.getItem(HISTORY_KEY));
+    const history = JSON.parse(localStorage.getItem(HISTORY_KEY + storageSuffix));
     return Array.isArray(history) ? history : [];
   } catch {
     return [];
@@ -144,12 +146,12 @@ function loadHistory() {
 }
 
 function saveHistory(history) {
-  localStorage.setItem(HISTORY_KEY, JSON.stringify(history));
+  localStorage.setItem(HISTORY_KEY + storageSuffix, JSON.stringify(history));
 }
 
 function clearHistory() {
   if (!confirm("Clear all saved exam attempt history? This cannot be undone.")) return;
-  localStorage.removeItem(HISTORY_KEY);
+  localStorage.removeItem(HISTORY_KEY + storageSuffix);
   renderSetupAvailability();
   renderHistory();
 }
@@ -196,6 +198,14 @@ function questionRef(qOrResult) {
   return n ? `Q${n}` : qOrResult?.id || "Unknown question";
 }
 
+function questionForSavedResult(result) {
+  const q = questionLookup.get(result.id);
+  if (!q || q.module !== result.module || q.number !== result.number) return null;
+  if (!Array.isArray(result.correct) || !answersEqual(normalizeCorrectAnswer(q), result.correct)) return null;
+  if (result.sourcePdf !== undefined && result.sourcePdf !== (q.sourcePdf ?? null)) return null;
+  return q;
+}
+
 function sortQuestionIds(ids) {
   return [...ids].sort((a, b) => {
     const qa = questionLookup.get(a);
@@ -212,13 +222,14 @@ function getSeenQuestionIds(history = loadHistory()) {
   for (const attempt of history) {
     if (Array.isArray(attempt.questionResults)) {
       for (const result of attempt.questionResults) {
-        if (result.id) seen.add(result.id);
+        if (questionForSavedResult(result)) seen.add(result.id);
       }
+      continue;
     }
     for (const [module, refs] of Object.entries(attempt.questionRefsByModule || {})) {
       for (const ref of refs || []) {
         const id = questionIdFromModuleAndRef(module, ref);
-        if (id) seen.add(id);
+        if (questionLookup.get(id)?.module === module) seen.add(id);
       }
     }
   }
@@ -230,7 +241,7 @@ function getMissedQuestionIds(history = loadHistory()) {
   for (const attempt of history) {
     if (!Array.isArray(attempt.questionResults)) continue;
     for (const result of attempt.questionResults) {
-      if (result.id && result.isCorrect === false) missed.add(result.id);
+      if (result.isCorrect === false && questionForSavedResult(result)) missed.add(result.id);
     }
   }
   return missed;
@@ -254,7 +265,7 @@ function buildDetailedQuestionStats(history = loadHistory()) {
   for (const attempt of history) {
     if (!Array.isArray(attempt.questionResults)) continue;
     for (const result of attempt.questionResults) {
-      if (!result.id) continue;
+      if (!questionForSavedResult(result)) continue;
       stats[result.id] ||= { seen: 0, correct: 0, missed: 0, lastCorrect: null };
       stats[result.id].seen++;
       if (result.isCorrect) stats[result.id].correct++;
@@ -292,7 +303,7 @@ function renderMissedModules(byModule, emptyText, legacyText = "") {
       <ul>
         ${items.map(({ q, stats }) => {
           const statText = stats ? ` <span class="small muted">(${stats.correct}/${stats.seen} fully correct; missed ${stats.missed}x${stats.lastCorrect === true ? "; last correct" : stats.lastCorrect === false ? "; last missed" : ""})</span>` : "";
-          return `<li><strong>${escapeHtml(questionRef(q))}</strong>${statText}<br><span class="small muted">${escapeHtml(promptPreview(q))}</span></li>`;
+          return `<li><strong>${escapeHtml(questionRef(q))}</strong>${statText}<br><span class="small muted">${escapeHtml(promptPreview(q))}</span>${renderReviewSource(q)}</li>`;
         }).join("")}
       </ul>
     </details>`).join("")}
@@ -390,10 +401,15 @@ function renderHistory() {
       .join("");
 
     let missedDetails = `<p class="small muted">Exact missed-question detail was not stored for this older attempt. New attempts taken in v4 will show this.</p>`;
+    let questionReview = "";
     if (Array.isArray(attempt.questionResults)) {
-      const missedAttemptIds = attempt.questionResults.filter(r => r.isCorrect === false).map(r => r.id).filter(Boolean);
+      const missedAttemptIds = getMissedQuestionIds([attempt]);
       const byModule = buildMissedByModuleFromIds(new Set(missedAttemptIds));
       missedDetails = renderMissedModules(byModule, "No missed questions in this attempt.");
+      questionReview = `<details>
+        <summary>Review questions</summary>
+        <div class="review-list">${attempt.questionResults.map(renderSavedQuestionReview).join("")}</div>
+      </details>`;
     }
 
     return `<article class="attempt-card">
@@ -408,6 +424,7 @@ function renderHistory() {
         <summary>Source questions covered</summary>
         <div class="coverage-details">${coverageDetails}</div>
       </details>
+      ${questionReview}
     </article>`;
   }).join("");
 }
@@ -438,9 +455,12 @@ function renderSetup() {
   $("timer").classList.remove("warning");
   const counts = meta.moduleCounts;
   const moduleCount = Object.keys(counts).length;
-  $("bankSummary").textContent = `${meta.questionCount} questions loaded from ${moduleCount} ${moduleCount === 1 ? "module" : "modules"}.`;
+  $("bankSummary").textContent = usingSampleBank
+    ? `CS6250 sample · ${meta.questionCount} questions from ${moduleCount} modules`
+    : `${meta.questionCount} questions loaded from ${moduleCount} ${moduleCount === 1 ? "module" : "modules"}.`;
+  $("sampleBankNotice").hidden = !usingSampleBank;
   $("moduleBreakdown").innerHTML = Object.entries(counts)
-    .map(([module, count]) => `<div><strong>${module}</strong><br>${count} questions</div>`).join("");
+    .map(([module, count]) => `<div><strong>${escapeHtml(module)}</strong><br>${count} questions</div>`).join("");
   const saved = loadSavedState();
   $("resumeExam").hidden = !saved;
   $("clearSaved").hidden = !saved;
@@ -557,7 +577,7 @@ function renderQuestion() {
   $("questionPrompt").textContent = q.prompt;
   $("questionImages").innerHTML = (q.images || []).map(src => `
     <figure>
-      <img src="${src}" alt="Question figure">
+      <img src="${escapeHtml(src)}" alt="Question figure">
       ${q.figureCaption ? `<figcaption>${escapeHtml(q.figureCaption)}</figcaption>` : ""}
     </figure>`).join("");
   const inputType = q.type === "select_all" ? "checkbox" : "radio";
@@ -679,7 +699,9 @@ function buildQuestionResults(graded) {
     id: g.q.id,
     module: g.q.module,
     number: g.q.number,
+    sourcePdf: g.q.sourcePdf ?? null,
     isCorrect: g.isCorrect,
+    pointsEarned: g.pointsEarned,
     user: g.user,
     correct: g.correct
   }));
@@ -725,7 +747,7 @@ function renderResults(filter = "all") {
   `;
   const byModule = buildModuleStats(graded);
   $("moduleResults").innerHTML = Object.entries(byModule).sort(([a], [b]) => a.localeCompare(b)).map(([module, r]) => {
-    return `<div><strong>${module}</strong><br>${formatScore(r.pointsEarned, r.total)}</div>`;
+    return `<div><strong>${escapeHtml(module)}</strong><br>${formatScore(r.pointsEarned, r.total)}</div>`;
   }).join("");
   renderReview(filter);
 }
@@ -743,31 +765,71 @@ function formatAnswer(q, keys) {
   return keys.map(k => `${k}: ${q.choices[k] ?? k}`).join("; ");
 }
 
+function renderReviewSource({ sourcePdf, sourcePage }) {
+  if (typeof sourcePdf !== "string" || !/^[^/\\]+\.pdf$/i.test(sourcePdf)) return "";
+  if (!Number.isSafeInteger(sourcePage) || sourcePage < 1) return "";
+  const filename = encodeURIComponent(sourcePdf).replace(/[!'()*]/g, char =>
+    `%${char.charCodeAt(0).toString(16).toUpperCase()}`);
+  return `<div class="review-source"><a href="sources/${filename}#page=${sourcePage}" target="_blank" rel="noopener noreferrer" title="${escapeHtml(sourcePdf)}">Review source — PDF page ${sourcePage}</a></div>`;
+}
+
+function renderQuestionReview(q, { user, correct, pointsEarned, isCorrect }) {
+  const imageHtml = (q.images || []).map(src =>
+    `<img src="${escapeHtml(src)}" alt="Question figure" loading="lazy">`).join("");
+  let status = '<span class="wrong-text">Incorrect</span>';
+  if (isCorrect) status = '<span class="correct-text">Correct</span>';
+  else if (pointsEarned > 0) status = `Partial credit (${formatPercent(pointsEarned, 1)})`;
+  else if (pointsEarned == null && q.type === "select_all") status = "Not fully correct";
+  const gradeClass = isCorrect ? " correct" : pointsEarned === 0 ? " wrong" : "";
+  return `<article class="review-card${gradeClass}">
+    <h3>${escapeHtml(q.module)} / Source ${escapeHtml(questionRef(q))}: ${status}</h3>
+    <p>${escapeHtml(q.prompt)}</p>
+    ${imageHtml ? `<div class="question-images">${imageHtml}</div>` : ""}
+    <p class="answer-line"><span class="label">Your answer:</span> ${escapeHtml(formatAnswer(q, user))}</p>
+    <p class="answer-line"><span class="label">Correct answer:</span> ${escapeHtml(formatAnswer(q, correct))}</p>
+    ${q.explanation ? `<div class="explanation"><strong>Why:</strong> ${escapeHtml(q.explanation)}</div>` : ""}
+    ${renderReviewSource(q)}
+  </article>`;
+}
+
+function renderSavedQuestionReview(result) {
+  const q = questionForSavedResult(result);
+  if (q) return renderQuestionReview(q, result);
+  return `<p class="small muted">${escapeHtml(result.module)} / Source ${escapeHtml(questionRef(result))}: Question unavailable in this bank.</p>`;
+}
+
 function renderReview(filter = "all") {
   const graded = gradeExam();
   const shown = filter === "missed" ? graded.filter(g => !g.isCorrect) : graded;
   $("reviewList").innerHTML = shown.map((g) => {
-    const q = g.q;
-    const imageHtml = (q.images || []).map(src => `<img src="${src}" alt="Question figure">`).join("");
-    let status = '<span class="wrong-text">Incorrect</span>';
-    if (g.isCorrect) status = '<span class="correct-text">Correct</span>';
-    else if (g.pointsEarned > 0) status = `Partial credit (${formatPercent(g.pointsEarned, 1)})`;
-    const gradeClass = g.isCorrect ? ' correct' : g.pointsEarned === 0 ? ' wrong' : '';
-    return `<article class="review-card${gradeClass}">
-      <h3>${escapeHtml(q.module)} / Source Q${q.number}: ${status}</h3>
-      <p>${escapeHtml(q.prompt)}</p>
-      ${imageHtml ? `<div class="question-images">${imageHtml}</div>` : ''}
-      <p class="answer-line"><span class="label">Your answer:</span> ${escapeHtml(formatAnswer(q, g.user))}</p>
-      <p class="answer-line"><span class="label">Correct answer:</span> ${escapeHtml(formatAnswer(q, g.correct))}</p>
-      ${q.explanation ? `<div class="explanation"><strong>Why:</strong> ${escapeHtml(q.explanation)}</div>` : ''}
-    </article>`;
+    const current = questionLookup.get(g.q.id);
+    const sameQuestion = current && current.module === g.q.module && current.number === g.q.number
+      && current.type === g.q.type && current.sourcePdf === g.q.sourcePdf
+      && current.sourcePage === g.q.sourcePage && answersEqual(normalizeCorrectAnswer(current), g.correct)
+      && JSON.stringify(current.choices) === JSON.stringify(g.q.choices);
+    const q = sameQuestion ? { ...g.q, explanation: current.explanation } : g.q;
+    return renderQuestionReview(q, g);
   }).join("") || `<p>No questions to show.</p>`;
 }
 
+async function loadQuestionBank() {
+  const options = { cache: "no-cache" };
+  const personal = await fetch("questions.json", options);
+  if (personal.ok) {
+    const data = await personal.json();
+    if (data.questions.length) return data;
+  } else if (personal.status !== 404) {
+    throw new Error(`Question bank request failed (${personal.status}).`);
+  }
+  const sample = await fetch("questions.sample.json", options);
+  if (sample.status === 404) return { questions: [] };
+  if (!sample.ok) throw new Error(`Sample bank request failed (${sample.status}).`);
+  usingSampleBank = true;
+  return sample.json();
+}
+
 async function init() {
-  const res = await fetch('questions.json', { cache: 'no-cache' });
-  if (!res.ok) throw new Error(`Question bank request failed (${res.status}).`);
-  const data = await res.json();
+  const data = await loadQuestionBank();
   questionBank = data.questions;
   if (!questionBank.length) {
     $("bankSummary").textContent = "No active question bank";
@@ -776,6 +838,8 @@ async function init() {
   }
   questionLookup = new Map(questionBank.map(q => [q.id, q]));
   meta = data.meta;
+  if (usingSampleBank) storageSuffix = ":sample";
+  else if (meta.bankId) storageSuffix = `:bank:${meta.bankId}`;
   renderSetup();
 
   $("startExam").addEventListener("click", startExam);

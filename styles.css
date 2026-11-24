@@ -175,7 +175,8 @@ button.danger { background: var(--danger); color: #fff; border-color: var(--dang
 .answer-line .label { font-weight: 800; }
 .correct-text { color: var(--correct); font-weight: 750; }
 .wrong-text { color: var(--wrong); font-weight: 750; }
-.explanation { margin-top: .75rem; padding: .75rem; background: #f8f8f8; border-radius: 8px; color: #333; }
+.explanation { margin-top: .75rem; padding: .75rem; background: #f8f8f8; border-radius: 8px; color: #333; white-space: pre-wrap; overflow-wrap: anywhere; }
+.review-source { margin-top: .5rem; }
 @media (max-width: 760px) {
   .app-header { align-items: flex-start; flex-direction: column; }
   .exam-layout { grid-template-columns: 1fr; }
